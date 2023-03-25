@@ -18,20 +18,20 @@ package main
 
 import (
 	"container/list"
-	"errors"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 )
 
+const twSize = 60
+
 type GTimeWTask struct {
-	// delay will be used for calculation round and slot position
-	delay time.Duration
-	round int
-	hash  string
-	param interface{}
-	do    func(interface{})
+	// delaySec will be used for calculation round and slot position
+	delaySec int
+	round    int
+	hash     string
+	param    interface{}
+	do       func(interface{})
 }
 
 // GTimeW time wheel
@@ -49,7 +49,8 @@ type GTimeW struct {
 	size int
 
 	// taskPool indicates whether to use a goroutine pool to run tasks
-	taskPool *sync.Pool
+	// TODO: worker pool
+	//taskPool *sync.Pool
 
 	taskRecord map[string]int
 
@@ -59,58 +60,47 @@ type GTimeW struct {
 	rmCh  chan string
 }
 
-// NewGTimeW todo pool
-func NewGTimeW(grad time.Duration, size int, wpool *sync.Pool) (*GTimeW, error) {
-	if grad <= 0 || size <= 0 {
-		return nil, errors.New("graduation and size illegal")
-	}
+func NewGTimeW() *GTimeW {
 	gtw := &GTimeW{
-		grad:  grad,
-		slots: make([]*list.List, size),
+		grad:  time.Second,
+		slots: make([]*list.List, twSize),
 		pos:   0,
-		size:  size,
+		size:  twSize,
 
 		taskRecord: make(map[string]int, 8),
 		stopped:    0,
 		addCh:      make(chan *GTimeWTask),
 		rmCh:       make(chan string),
 	}
-	if wpool != nil {
-		gtw.taskPool = wpool
-	}
 	for i := range gtw.slots {
 		gtw.slots[i] = list.New()
 	}
-	return gtw, nil
+	return gtw
 }
 
-func (gtw *GTimeW) AddTask(delay time.Duration, taskHash string, do func(interface{}), param interface{}) {
-	// delay time must greater than graduation
-	if delay.Nanoseconds() < gtw.grad.Nanoseconds() {
-		delay = 0
-	}
+func (gtw *GTimeW) AddTask(delaySec int, taskHash string, do func(interface{}), param interface{}) {
 	taskHash = strings.TrimSpace(taskHash)
-	if delay < 0 || taskHash == "" || do == nil {
+	if delaySec < 0 || taskHash == "" || do == nil {
 		return
 	}
 	if atomic.LoadInt32(&gtw.stopped) == 1 {
 		return
 	}
 	// schedule the task right now
-	if delay == 0 {
-		if gtw.taskPool != nil {
-			// todo
-			//gtw.taskPool.Submit()
-		} else {
-			go do(param)
-		}
+	if delaySec == 0 {
+		//if gtw.taskPool != nil {
+		// todo
+		//gtw.taskPool.Submit()
+		//} else {
+		go do(param)
+		//}
 		return
 	}
 	gtw.addCh <- &GTimeWTask{
-		delay: delay,
-		hash:  taskHash,
-		do:    do,
-		param: param,
+		delaySec: delaySec,
+		hash:     taskHash,
+		do:       do,
+		param:    param,
 	}
 }
 
@@ -172,7 +162,7 @@ func (gtw *GTimeW) remove(key string) {
 }
 
 func (gtw *GTimeW) add(t *GTimeWTask) {
-	round, pos := gtw.calculate(t.delay)
+	round, pos := gtw.calculate(t.delaySec)
 	t.round = round
 
 	gtw.slots[pos].PushBack(t)
@@ -196,16 +186,15 @@ func (gtw *GTimeW) schedule(l *list.List) {
 		// if the task not ready to run
 		if task.round > 0 {
 			task.round--
-			println(task.round)
 			t = t.Next()
 			continue
 		}
-		if gtw.taskPool != nil {
-			// TODO: use pool to run task
-			// taskPool.Submit(task.do, task.param)
-		} else {
-			go task.do(task.param)
-		}
+		//if gtw.taskPool != nil {
+		// TODO: use pool to run task
+		// taskPool.Submit(task.do, task.param)
+		//} else {
+		go task.do(task.param)
+		//}
 		// store the next task
 		next := t.Next()
 
@@ -219,14 +208,11 @@ func (gtw *GTimeW) schedule(l *list.List) {
 	}
 }
 
-func (gtw *GTimeW) calculate(delay time.Duration) (round, slotPos int) {
-	// unify time unit and get slot elapse
-	delayNano := delay.Nanoseconds()
-	gradNano := gtw.grad.Nanoseconds()
-
-	gradElapse := int(delayNano / gradNano)
-
-	round = gradElapse / gtw.size
-	slotPos = (gtw.pos + gradElapse) % gtw.size
+func (gtw *GTimeW) calculate(delaySec int) (round, slotPos int) {
+	round = delaySec / gtw.size
+	slotPos = (gtw.pos + delaySec) % gtw.size
+	if slotPos > 0 {
+		slotPos--
+	}
 	return
 }

@@ -18,34 +18,41 @@ package main
 
 import (
 	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 )
 
 func TestNewGTimeW(t *testing.T) {
 	inf := make(chan bool)
-	gtw, _ := NewGTimeW(time.Second, 60, nil)
+	gtw := NewGTimeW()
 	gtw.Start()
 	defer gtw.Stop()
 
+	type param struct {
+		name   string
+		preSet int
+	}
 	st := time.Now()
-	//gtw.AddTask(3, "task1", func(i interface{}) {
-	//	fmt.Printf("task1 scheduled after %v\n", time.Since(st))
-	//}, nil)
-
-	gtw.AddTask(time.Second, "task2", func(i interface{}) {
-		fmt.Printf("task2 scheduled after %v\n", time.Since(st))
-	}, nil)
+	for i := 0; i < 100; i++ {
+		// random schedule two minutes
+		delaySec := rand.Intn(121)
+		name := "task" + fmt.Sprint(i)
+		gtw.AddTask(delaySec, name, func(i interface{}) {
+			p := i.(*param)
+			fmt.Printf("%s has been scheduled after %v, pre-set is %v sec.\n", p.name, time.Since(st), p.preSet)
+		}, &param{name: name, preSet: delaySec})
+	}
 
 	<-inf
 }
 
 func BenchmarkGTimeW(b *testing.B) {
-	gtw, _ := NewGTimeW(time.Second, 60, nil)
+	gtw := NewGTimeW()
 	gtw.Start()
 	defer gtw.Stop()
 	for i := 0; i < b.N; i++ {
-		gtw.AddTask(3*time.Second, "task"+fmt.Sprint(i), func(i interface{}) {
+		gtw.AddTask(3, "task"+fmt.Sprint(i), func(i interface{}) {
 
 		}, nil)
 	}
